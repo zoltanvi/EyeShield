@@ -1,15 +1,23 @@
-﻿using System.Windows.Threading;
+﻿using System.Diagnostics;
+using System.Windows.Threading;
 
 namespace EyeShield2.ViewModels.Windows;
 
 public partial class MainWindowViewModel : ObservableObject
 {
-    private DispatcherTimer _countdownTimer;
-    private bool _started;
-
-    private readonly TimeSpan WorkingTimeInterval = TimeSpan.FromSeconds((20 * 60) - 1);
-    private readonly TimeSpan EyeRelaxInterval = TimeSpan.FromSeconds(3);
+    private DispatcherTimer _timer;
+    private Stopwatch _stopWatch;
+    
     private readonly TimeSpan TimerInterval = TimeSpan.FromMilliseconds(10);
+
+    [ObservableProperty]
+    private bool _isStarted;
+
+    [ObservableProperty]
+    private bool _isCounterPageOpen = true;
+
+    [ObservableProperty]
+    private bool _isSettingsPageOpen = false;
 
     [ObservableProperty]
     private bool _isWork = true;
@@ -21,60 +29,76 @@ public partial class MainWindowViewModel : ObservableObject
     private string _timerDisplay;
 
     [ObservableProperty]
+    private double _workPeriodMinutes = 20;
+
+    [ObservableProperty]
+    private double _restPeriodSeconds = 20;
+
+    [ObservableProperty]
     private TimeSpan _timeRemaining;
 
     [ObservableProperty]
-    private string _buttonText = "Start";
+    private double _maxProgressSeconds;
 
     [ObservableProperty]
-    private double _maxProgress = 100;
-
-    [ObservableProperty]
-    private double _progress = 100;
+    private double _progressSeconds;
 
     public MainWindowViewModel()
     {
-        TimeRemaining = WorkingTimeInterval;
-        MaxProgress = WorkingTimeInterval.TotalSeconds;
-        Progress = MaxProgress;
+        UpdateWorkPeriod();
+        ProgressSeconds = MaxProgressSeconds;
 
-        _countdownTimer = new DispatcherTimer(DispatcherPriority.DataBind);
-        _countdownTimer.Interval = TimerInterval;
-        _countdownTimer.Tick += CountdownTimer_Tick;
+        _stopWatch = new Stopwatch();
+        _timer = new DispatcherTimer(DispatcherPriority.DataBind);
+        _timer.Interval = TimerInterval;
+        _timer.Tick += CountdownTimer_Tick;
     }
 
     [RelayCommand]
     private async Task StartStop()
     {
-        _countdownTimer.Stop();
+        _timer.Stop();
+        _stopWatch.Stop();
+        UpdateWorkPeriod();
 
-        if (!_started)
+        if (!IsStarted)
         {
-            _countdownTimer.Start();
-            ButtonText = "Stop";
+            _timer.Start();
+            _stopWatch.Restart();
 
             await StartWork();
         }
-        else
-        {
-            ButtonText = "Start";
-        }
 
-        _started = !_started;
+        IsStarted = !IsStarted;
+    }
+
+    [RelayCommand]
+    private async Task OpenSettings()
+    {
+        IsCounterPageOpen = false;
+        IsSettingsPageOpen = true;
+    }
+
+    [RelayCommand]
+    private async Task OpenCounter()
+    {
+        IsCounterPageOpen = true;
+        IsSettingsPageOpen = false;
     }
 
     private async void CountdownTimer_Tick(object? sender, EventArgs e)
     {
         if (TimeRemaining.TotalMilliseconds > 0)
         {
-            TimeRemaining = TimeRemaining.Subtract(TimerInterval);
-            Progress = TimeRemaining.TotalSeconds;
+            TimeRemaining = TimeSpan.FromMilliseconds((MaxProgressSeconds * 1000) - _stopWatch.ElapsedMilliseconds);
+            ProgressSeconds = TimeRemaining.TotalSeconds;
         }
         else
         {
             // Time's up
 
-            _countdownTimer.Stop();
+            _timer.Stop();
+            _stopWatch.Stop();
 
             if (IsWork)
             {
@@ -85,7 +109,8 @@ public partial class MainWindowViewModel : ObservableObject
                 await StartWork(true);
             }
 
-            _countdownTimer.Start();
+            _timer.Start();
+            _stopWatch.Restart();
         }
     }
 
@@ -99,9 +124,7 @@ public partial class MainWindowViewModel : ObservableObject
             await PlaySound(1000, 2000, 10, 2);
         }
 
-        TimeRemaining = WorkingTimeInterval;
-        MaxProgress = WorkingTimeInterval.TotalSeconds;
-
+        UpdateWorkPeriod();
     }
 
     private async Task StartRest(bool playSound = false)
@@ -114,8 +137,7 @@ public partial class MainWindowViewModel : ObservableObject
             await PlaySound(1000, 500, 30, 2);
         }
 
-        TimeRemaining = EyeRelaxInterval;
-        MaxProgress = EyeRelaxInterval.TotalSeconds;
+        UpdateRestPeriod();
     }
 
     private async Task PlaySound(int firstFrequency, int secondFrequency, int beepDelay, int beepRepeat)
@@ -128,14 +150,36 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    partial void OnTimeRemainingChanged(TimeSpan oldValue, TimeSpan newValue)
+    partial void OnWorkPeriodMinutesChanged(double value)
     {
-        TimerDisplay = newValue.TotalSeconds switch
-        {
-            > 60 => ((int)newValue.TotalMinutes + 1).ToString() + " minutes remaining",
-            <= 60 and > 5 => newValue.ToString(@"mm\:ss"),
-            <= 5 and > -10 => newValue.ToString(@"mm\:ss\:ff"),
-            _ => "No time left"
-        };
+        _timer.Stop();
+        _stopWatch.Stop();
+        IsStarted = false;
+
+        UpdateWorkPeriod();
+    }
+
+    private void UpdateWorkPeriod()
+    {
+        MaxProgressSeconds = WorkPeriodMinutes * 60;
+        ProgressSeconds = MaxProgressSeconds;
+        TimeRemaining = TimeSpan.FromSeconds(MaxProgressSeconds);
+    }
+
+    partial void OnRestPeriodSecondsChanged(double oldValue, double newValue)
+    {
+        _timer.Stop();
+        _stopWatch.Stop();
+        IsStarted = false;
+        IsWork = true;
+        IsRest = false;
+
+        UpdateWorkPeriod();
+    }
+
+    private void UpdateRestPeriod()
+    {
+        MaxProgressSeconds = RestPeriodSeconds;
+        TimeRemaining = TimeSpan.FromSeconds(MaxProgressSeconds);
     }
 }
